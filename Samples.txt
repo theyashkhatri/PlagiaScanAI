@@ -1,0 +1,19 @@
+🧪 PlagiScan Test Content
+
+Test 1 — High Plagiarism (should score 60–85%)
+
+Machine learning (ML) is a field of study in artificial intelligence concerned with the development and study of statistical algorithms that can learn from data and generalize to unseen data, and thus perform tasks without explicit instructions. Recently, generative artificial intelligence has become a powerful force in the field. Machine learning approaches have been applied to large language models, computer vision, speech recognition, email filtering, agriculture, and medicine. The name machine learning was coined in 1959 by Arthur Samuel, an IBM employee and pioneer in the field of computer gaming and artificial intelligence.
+Expected: High plagiarism (~70%), flagged as Wikipedia match on "Machine learning"
+
+Test 2 — Moderate / Paraphrased (should score 25–45%)
+
+
+Test 3 — Mostly Original (should score 0–15%)
+
+In my opinion, the rise of data-driven technologies has changed the way we approach problem-solving in engineering. Rather than relying solely on deterministic models, engineers today often incorporate statistical and probabilistic methods to handle uncertainty. This shift has been gradual but significant, particularly in domains like structural health monitoring and predictive maintenance, where real-time data from sensors can be used to make informed decisions before failures occur.
+Expected: Mostly original (~5–10%), no strong source matches
+
+Test 4 — AI-Generated Detection (should score 30–55%)
+
+Artificial intelligence is revolutionizing various industries by enabling machines to perform tasks that traditionally required human intelligence. From healthcare to finance, AI applications are transforming the way organizations operate and make decisions. The potential of AI to drive innovation and improve efficiency is immense, and its impact will only continue to grow in the coming years. As AI technology advances, it is crucial for businesses to adapt and leverage these capabilities to remain competitive in the global market.
+Expected: AI-written patterns detected, moderate score (~35–50%), flagged in suggestions
