@@ -250,7 +250,30 @@
   }
   .upload-icon { font-size: 28px; margin-bottom: 8px; }
   .upload-text { font-size: 13px; color: var(--text2); }
-  .upload-sub { font-size: 11px; color: var(--text3); margin-top: 4px; font-family: var(--mono); }
+  .status-text { font-size: 13px; color: var(--text2); margin-top: 10px; font-family: var(--mono); }
+
+  /* Forensic Console */
+  .console-wrap {
+    background: #0c0c0c;
+    border: 1px solid #333;
+    border-radius: 8px;
+    margin-top: 20px;
+    padding: 12px;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 11px;
+    color: #00ff41;
+    height: 180px;
+    overflow-y: auto;
+    box-shadow: inset 0 0 10px rgba(0,0,0,0.5);
+    display: none;
+    line-height: 1.4;
+  }
+  .console-line { margin-bottom: 2px; }
+  .console-line.dim { color: #008f11; }
+  .console-line.warn { color: #f5a623; }
+  .console-line.error { color: #ff4b4b; }
+  .console-cursor { display: inline-block; width: 6px; height: 12px; background: #00ff41; margin-left: 4px; animation: blink 1s infinite; vertical-align: middle; }
+  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
 
   /* Analyze button */
   .btn-analyze {
@@ -298,14 +321,6 @@
     background: linear-gradient(90deg, var(--accent), var(--accent2));
     border-radius: 6px;
     transition: width 0.5s ease;
-  }
-  .status-text {
-    font-family: var(--mono);
-    font-size: 11px;
-    color: var(--text3);
-    margin-top: 6px;
-    text-align: center;
-    letter-spacing: 0.5px;
   }
 
   /* Results */
@@ -366,7 +381,7 @@
   .verdict-low  { background: rgba(74,222,128,0.08); color: var(--safe);   border: 1px solid rgba(74,222,128,0.2); }
 
   /* Stats row */
-  .stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .stats-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
   .stat-box {
     background: var(--surface2);
     border: 1px solid var(--border);
@@ -583,7 +598,7 @@
 
   @media(max-width:640px) {
     .main-grid { grid-template-columns: 1fr; }
-    .stats-row  { grid-template-columns: 1fr 1fr; }
+    .stats-row  { grid-template-columns: repeat(3, 1fr); }
     .score-card { flex-direction: column; text-align: center; }
     .options-grid { grid-template-columns: 1fr; }
   }
@@ -643,6 +658,10 @@
           <div class="option-check">✓</div>
           <span class="option-text">AI-Written Detection</span>
         </div>
+        <div class="option-item active" onclick="toggleOption(this)" data-key="local_engine">
+          <div class="option-check">✓</div>
+          <span class="option-text" style="color:var(--accent3)">Use Local Engine</span>
+        </div>
         <div class="option-item" onclick="toggleOption(this)" data-key="quotes">
           <div class="option-check"></div>
           <span class="option-text">Exclude Quotes</span>
@@ -682,8 +701,8 @@
     </div>
   </div>
 
-  <!-- API Key Card -->
-  <div class="card full" id="apiKeyCard" style="margin-bottom:0">
+  <!-- API Key Card (hidden when local engine is active) -->
+  <div class="card full" id="apiKeyCard" style="margin-bottom:0;display:none">
     <div class="card-label">🔑 API Configuration</div>
     <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
       <div style="flex:1;min-width:240px;position:relative">
@@ -701,6 +720,17 @@
     </div>
   </div>
 
+  <!-- Local Engine Badge -->
+  <div class="card full" id="localEngineBadge" style="margin-bottom:0;background:rgba(74,222,128,0.04);border-color:rgba(74,222,128,0.15)">
+    <div style="display:flex;align-items:center;gap:12px">
+      <div style="font-size:24px">🧠</div>
+      <div>
+        <div style="font-family:var(--display);font-size:14px;font-weight:700;color:var(--accent3)">Local Engine Active — No API Key Needed</div>
+        <div style="font-family:var(--mono);font-size:11px;color:var(--text3);margin-top:3px">TF-IDF · Cosine · Jaccard · N-gram · LCS · Winnowing · AI Detection</div>
+      </div>
+    </div>
+  </div>
+
   <button class="btn-analyze" id="analyzeBtn" onclick="runAnalysis()">
     <span id="btnText">🔬 Analyze for Plagiarism</span>
   </button>
@@ -709,6 +739,10 @@
     <div class="progress-bar" id="progressBar" style="width:0%"></div>
   </div>
   <div class="status-text" id="statusText"></div>
+  <div class="console-wrap" id="consoleWrap">
+    <div id="consoleContent"></div>
+    <div class="console-cursor"></div>
+  </div>
   <div class="error-box" id="errorBox"></div>
 
   <!-- Results Section -->
@@ -733,7 +767,7 @@
           </div>
           <div class="score-info">
             <h2 id="verdictTitle">Awaiting Analysis</h2>
-            <p id="verdictDesc">Submit text to receive a detailed plagiarism report powered by Claude AI.</p>
+            <p id="verdictDesc">Submit text to receive a detailed plagiarism report powered by the local AI engine.</p>
             <div class="verdict-badge verdict-low" id="verdictBadge" style="display:none">⬤ &nbsp;<span id="verdictText"></span></div>
           </div>
         </div>
@@ -753,6 +787,10 @@
           <div class="stat-box">
             <div class="stat-val" id="statSources" style="color:var(--safe)">—</div>
             <div class="stat-key">Sources</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-val" id="statAI" style="color:var(--accent)">—</div>
+            <div class="stat-key">AI Score</div>
           </div>
         </div>
       </div>
@@ -813,9 +851,18 @@
 
 <script>
 let sensitivity = 'standard';
-let options = { internet: true, academic: true, paraphrase: true, ai_written: true, quotes: false, refs: false };
+let options = { internet: true, academic: true, paraphrase: true, ai_written: true, local_engine: true, quotes: false, refs: false };
 let analysisResult = null;
 let activeTab = 'highlighted';
+
+function logToConsole(message, type = 'info') {
+  const consoleContent = document.getElementById('consoleContent');
+  const line = document.createElement('div');
+  line.className = 'console-line ' + type;
+  line.textContent = `> ${message}`;
+  consoleContent.appendChild(line);
+  document.getElementById('consoleWrap').scrollTop = document.getElementById('consoleWrap').scrollHeight;
+}
 
 // API Key management
 function getApiKey() {
@@ -824,37 +871,15 @@ function getApiKey() {
 function saveKey(val) {
   if (val.startsWith('sk-ant-')) {
     localStorage.setItem('plagiscan_api_key', val);
-    const status = document.getElementById('keyStatus');
-    status.style.display = 'block';
-    status.style.color = 'var(--safe)';
-    status.textContent = '✓ API key saved to local storage';
-    document.getElementById('apiKeyInput').style.borderColor = 'var(--safe)';
-  } else if (val.length > 0) {
-    const status = document.getElementById('keyStatus');
-    status.style.display = 'block';
-    status.style.color = 'var(--warn)';
-    status.textContent = '⚠ Key should start with sk-ant-...';
-    document.getElementById('apiKeyInput').style.borderColor = 'var(--warn)';
-  } else {
-    document.getElementById('keyStatus').style.display = 'none';
-    document.getElementById('apiKeyInput').style.borderColor = '';
   }
 }
 function toggleKeyVisibility() {
   const inp = document.getElementById('apiKeyInput');
   inp.type = inp.type === 'password' ? 'text' : 'password';
 }
-// Restore saved key on load
 window.addEventListener('DOMContentLoaded', () => {
   const saved = localStorage.getItem('plagiscan_api_key');
-  if (saved) {
-    document.getElementById('apiKeyInput').value = saved;
-    const status = document.getElementById('keyStatus');
-    status.style.display = 'block';
-    status.style.color = 'var(--safe)';
-    status.textContent = '✓ API key loaded from local storage';
-    document.getElementById('apiKeyInput').style.borderColor = 'var(--safe)';
-  }
+  if (saved) document.getElementById('apiKeyInput').value = saved;
 });
 
 // Word count
@@ -868,6 +893,10 @@ function toggleOption(el) {
   const check = el.querySelector('.option-check');
   check.textContent = el.classList.contains('active') ? '✓' : '';
   options[el.dataset.key] = el.classList.contains('active');
+  if (el.dataset.key === 'local_engine') {
+    document.getElementById('apiKeyCard').style.display = options.local_engine ? 'none' : 'block';
+    document.getElementById('localEngineBadge').style.display = options.local_engine ? 'block' : 'none';
+  }
 }
 
 function setSens(val, el) {
@@ -884,20 +913,15 @@ function setSens(val, el) {
 function handleFile(event) {
   const file = event.target.files[0];
   if (!file) return;
-  if (file.type === 'text/plain' || file.name.endsWith('.txt')) {
-    const reader = new FileReader();
-    reader.onload = e => {
-      document.getElementById('inputText').value = e.target.result;
-      const words = e.target.result.trim().split(/\s+/).filter(Boolean).length;
-      document.getElementById('wordCount').textContent = words + ' words';
-    };
-    reader.readAsText(file);
-  } else {
-    showError('Currently only .txt files are supported for upload.');
-  }
+  const reader = new FileReader();
+  reader.onload = e => {
+    document.getElementById('inputText').value = e.target.result;
+    const words = e.target.result.trim().split(/\s+/).filter(Boolean).length;
+    document.getElementById('wordCount').textContent = words + ' words';
+  };
+  reader.readAsText(file);
 }
 
-// Drag and drop
 const uploadZone = document.getElementById('uploadZone');
 uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.style.borderColor = 'var(--accent)'; });
 uploadZone.addEventListener('dragleave', () => { uploadZone.style.borderColor = ''; });
@@ -922,177 +946,74 @@ function setProgress(pct, status) {
 
 async function runAnalysis() {
   const text = document.getElementById('inputText').value.trim();
-  if (!text || text.length < 50) { showError('Please enter at least 50 characters of text to analyze.'); return; }
+  if (!text || text.length < 50) { showError('Please enter at least 50 characters.'); return; }
 
-  // UI
+  // UI Setup
   document.getElementById('analyzeBtn').disabled = true;
-  document.getElementById('btnText').textContent = '⏳ Analyzing...';
-  // Add shimmer effect
-  const shimmerEl = document.createElement('div');
-  shimmerEl.className = 'shimmer';
-  shimmerEl.id = 'btnShimmer';
+  document.getElementById('btnText').textContent = 'Analyzing...';
+  const shimmerEl = document.createElement('div'); shimmerEl.className = 'shimmer'; shimmerEl.id = 'btnShimmer';
   document.getElementById('analyzeBtn').appendChild(shimmerEl);
   document.getElementById('progressWrap').style.display = 'block';
+  document.getElementById('consoleWrap').style.display = 'block';
+  document.getElementById('consoleContent').innerHTML = '';
   document.getElementById('resultsSection').style.display = 'none';
   document.getElementById('errorBox').classList.remove('visible');
+  
+  const requestId = 'scan_' + Date.now();
+  let logSource = new EventSource('/api/logs?id=' + requestId);
+  
+  logSource.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    logToConsole(data.message, data.type);
+  };
 
-  const steps = [
-    [10, '🔍 Tokenizing document...'],
-    [25, '📡 Scanning web sources...'],
-    [45, '🎓 Checking academic databases...'],
-    [65, '🤖 Running AI similarity engine...'],
-    [80, '📊 Computing similarity scores...'],
-    [95, '📝 Generating detailed report...'],
+  const steps = options.local_engine ? [
+    [10, 'Initializing local engine...'],
+    [30, 'Searching Wikipedia...'],
+    [50, 'Scanning academic papers...'],
+    [70, 'Running forensic analysis...'],
+    [90, 'Finalizing report...']
+  ] : [
+    [10, 'Preparing request...'],
+    [40, 'Sending to AI...'],
+    [70, 'Analyzing patterns...'],
+    [90, 'Formatting results...']
   ];
 
   let stepIdx = 0;
   const stepInterval = setInterval(() => {
-    if (stepIdx < steps.length) {
-      setProgress(...steps[stepIdx]);
-      stepIdx++;
-    }
-  }, 1000);
-
-  const enabledOptions = Object.entries(options).filter(([k,v]) => v).map(([k]) => k).join(', ');
-  const wordCount = text.split(/\s+/).filter(Boolean).length;
-
-  const systemPrompt = `You are PlagiScan AI, a highly accurate academic plagiarism detection engine. Your analysis must be precise, evidence-based, and calibrated to real-world plagiarism detection standards used by tools like Turnitin and iThenticate.
-
-SCORING RULES (strictly follow these thresholds):
-- 0–10%: Mostly Original — common phrases or boilerplate only, no meaningful plagiarism
-- 11–25%: Minor Plagiarism — a few lifted phrases, mostly original work
-- 26–50%: Moderate Plagiarism — notable copied or paraphrased sections needing citation
-- 51–100%: Highly Plagiarized — majority of text is copied, paraphrased without credit, or AI-generated verbatim content
-
-DETECTION RULES:
-1. EXACT MATCH (type: "high"): Word-for-word text matching known Wikipedia articles, textbooks, news articles, academic papers, or any published web content. Score contribution: high.
-2. NEAR-MATCH (type: "medium"): Sentences that are 70–99% identical to a known source with minor word swaps (synonyms, reordering). Score contribution: medium.
-3. PARAPHRASE (type: "paraphrase"): Ideas, arguments, or structures clearly borrowed from a source but reworded. Score contribution: low.
-4. AI-GENERATED: Detect unnaturally smooth, generic, or formulaic writing patterns typical of LLMs. Flag in suggestions.
-
-ACCURACY GUIDELINES:
-- Only flag a segment if you have genuine, high-confidence knowledge it matches a real published source.
-- Do NOT fabricate sources. If you are uncertain, mark confidence as low and say so in the reason.
-- Common knowledge phrases ("the sun rises in the east", "water boils at 100°C") must NOT be flagged.
-- Generic transition words and academic connectors must NOT inflate the score.
-- Each flagged segment must be a VERBATIM substring copied from the input text — do not truncate or alter it.
-- The similarity_score must reflect the proportion of the total word count that is flagged, not just the number of segments.
-- sentence_count must be accurately counted from the input text.
-- flagged_phrases must equal the exact number of items in the segments array.
-
-SENSITIVITY ADJUSTMENTS:
-- strict: Lower the threshold for flagging; flag even 60% near-matches; include more paraphrase detections.
-- standard: Flag clear matches and strong paraphrases only.
-- lenient: Only flag verbatim or near-verbatim (90%+) matches with high confidence sources.
-
-Always respond ONLY with valid minified JSON. No markdown fences, no explanation text before or after.`;
-
-  const userPrompt = `Analyze the following text for plagiarism and return a JSON report.
-
-INPUT TEXT (${wordCount} words):
-"""
-${text}
-"""
-
-ACTIVE SETTINGS:
-- Sensitivity mode: ${sensitivity}
-- Enabled checks: ${enabledOptions}
-- Sentence count: count all sentences in the input carefully
-
-Return ONLY this exact JSON structure with no extra text:
-{
-  "similarity_score": <integer 0-100, calculated as: (total flagged words / total input words) * 100, rounded>,
-  "original_score": <integer, equals 100 - similarity_score>,
-  "verdict": "<Highly Plagiarized | Moderate Plagiarism | Minor Plagiarism | Mostly Original>",
-  "verdict_level": "<high | medium | low>",
-  "verdict_description": "<2-3 sentences: summarize what was found, which sources matched, and the confidence level>",
-  "word_count": ${wordCount},
-  "sentence_count": <count of sentences in input text>,
-  "flagged_phrases": <integer, must equal segments array length>,
-  "sources_found": <integer, must equal sources array length>,
-  "segments": [
-    {
-      "text": "<VERBATIM substring from input, 10–150 chars, must exist exactly in the input text>",
-      "type": "<high | medium | paraphrase>",
-      "reason": "<specific reason: e.g. 'Verbatim match with Wikipedia: Machine learning — Introduction section'>",
-      "source": "<real or highly plausible published source title>",
-      "source_url": "<real or highly plausible URL for that source>"
-    }
-  ],
-  "sources": [
-    {
-      "title": "<source name>",
-      "url": "<URL>",
-      "match_percent": <percentage of input text matched to this source>,
-      "match_level": "<high | medium | low>"
-    }
-  ],
-  "suggestions": [
-    {
-      "type": "<high | medium | info | good>",
-      "text": "<actionable, specific suggestion based on what was found>"
-    }
-  ],
-  "full_report": "<formal 200-250 word academic plagiarism report covering: document overview, methodology, flagged segments with sources, originality assessment, and concrete recommendations for the author>"
-}`;
-
-  const prompt = userPrompt;
-
-  const apiKey = getApiKey();
-  if (!apiKey) {
-    clearInterval(stepInterval);
-    setProgress(0, '');
-    document.getElementById('progressWrap').style.display = 'none';
-    document.getElementById('analyzeBtn').disabled = false;
-    document.getElementById('btnText').textContent = '🔬 Analyze for Plagiarism';
-    const s = document.getElementById('btnShimmer');
-    if (s) s.remove();
-    showError('Please enter your Anthropic API key in the API Configuration section above.');
-    document.getElementById('apiKeyInput').focus();
-    document.getElementById('apiKeyInput').style.borderColor = 'var(--danger)';
-    return;
-  }
+    if (stepIdx < steps.length) { setProgress(...steps[stepIdx]); stepIdx++; }
+  }, 1200);
 
   try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    const res = await fetch('/api/analyze', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true'
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 4000,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: prompt }]
-      })
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, sensitivity, options, requestId })
     });
-
+    
     clearInterval(stepInterval);
+    if (logSource) { logSource.close(); logSource = null; }
 
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({}));
-      throw new Error(err.error?.message || `HTTP ${response.status} — API error`);
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error?.message || 'Analysis failed.');
     }
 
-    setProgress(100, '✅ Analysis complete!');
-    const data = await response.json();
-    const raw = data.content.map(b => b.text || '').join('');
-    const clean = raw.replace(/```json|```/g, '').trim();
-    analysisResult = JSON.parse(clean);
-
-    setTimeout(() => renderResults(text, analysisResult), 400);
+    const data = await res.json();
+    setProgress(100, 'Analysis Complete');
+    renderResults(text, data);
   } catch (err) {
     clearInterval(stepInterval);
+    if (logSource) { logSource.close(); logSource = null; }
     setProgress(0, '');
     document.getElementById('progressWrap').style.display = 'none';
     document.getElementById('analyzeBtn').disabled = false;
     document.getElementById('btnText').textContent = '🔬 Analyze for Plagiarism';
     const s = document.getElementById('btnShimmer');
     if (s) s.remove();
-    showError('Analysis failed: ' + err.message + '. Please check your connection and try again.');
+    showError('Error: ' + err.message);
+    logToConsole('CRITICAL ERROR: ' + err.message, 'error');
   }
 }
 
@@ -1126,6 +1047,12 @@ function renderResults(originalText, r) {
   document.getElementById('statSentences').textContent = (r.sentence_count != null) ? r.sentence_count : '—';
   document.getElementById('statFlagged').textContent = (r.flagged_phrases != null) ? r.flagged_phrases : '—';
   document.getElementById('statSources').textContent = (r.sources_found != null) ? r.sources_found : (r.sources?.length ?? '—');
+  // AI Detection score
+  if (r.ai_detection) {
+    const aiEl = document.getElementById('statAI');
+    aiEl.textContent = r.ai_detection.score + '%';
+    aiEl.style.color = r.ai_detection.score > 60 ? 'var(--danger)' : r.ai_detection.score > 35 ? 'var(--warn)' : 'var(--safe)';
+  }
 
   // Highlighted text
   let html = escapeHtml(originalText);
@@ -1226,9 +1153,10 @@ function resetAll() {
   document.getElementById('verdictDesc').textContent = 'Submit text to receive a detailed plagiarism report powered by Claude AI.';
   document.getElementById('verdictBadge').style.display = 'none';
   // Reset stats
-  ['statWords','statSentences','statFlagged','statSources'].forEach(id => {
+  ['statWords','statSentences','statFlagged','statSources','statAI'].forEach(id => {
     document.getElementById(id).textContent = '—';
   });
+  document.getElementById('statAI').style.color = 'var(--accent)';
   // Reset tab to highlighted
   switchTab('highlighted', document.querySelector('.tab-btn'));
   analysisResult = null;
