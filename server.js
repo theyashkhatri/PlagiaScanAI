@@ -49,11 +49,13 @@ function extractSentences(text) {
     .map(s => s.trim()).filter(s => s.length > 20 && s.split(/\s+/).length >= 4);
 }
 
-function selectKeySentences(sentences, max = 12) {
-  // Select more sentences than before (was 6, now 12)
-  return sentences
+function selectKeySentences(sentences) {
+  // Include all sentences ≥8 words, proportional to text length, capped at 25.
+  // Purely length-sorted selection was skipping short but heavily-plagiarised sentences.
+  const eligible = sentences.filter(s => s.split(/\s+/).length >= 8);
+  const max = Math.min(eligible.length, Math.max(15, Math.ceil(sentences.length * 0.6)), 25);
+  return eligible
     .map(s => ({ text: s, wordCount: s.split(/\s+/).length }))
-    .filter(s => s.wordCount >= 5)
     .sort((a, b) => b.wordCount - a.wordCount)
     .slice(0, max)
     .map(s => s.text);
@@ -72,7 +74,8 @@ function splitIntoChunks(text) {
   const chunks = [...sents];
   for (let i = 0; i < sents.length - 1; i++) chunks.push(sents[i] + ' ' + sents[i + 1]);
   for (let i = 0; i < sents.length - 2; i++) chunks.push(sents[i] + ' ' + sents[i + 1] + ' ' + sents[i + 2]);
-  return chunks;
+  // Drop chunks too short for fingerprinting metrics to produce meaningful scores
+  return chunks.filter(c => algo.tokenize(c).length >= 20);
 }
 
 function computeSimilarity(inputSentence, sourceText) {
@@ -118,7 +121,11 @@ app.post('/api/analyze', async (req, res) => {
     streamLog(requestId, '📡 Phase 1: Multi-source sentence search...');
     for (let i = 0; i < keySentences.length; i++) {
       const sentence = keySentences[i];
-      const searchQuery = sentence.split(/\s+/).slice(0, 10).join(' ');
+      // Build query from top content words + a mid-phrase fragment for specificity
+      const contentWords = algo.tokenizeFiltered(sentence).slice(0, 5);
+      const words = sentence.split(/\s+/);
+      const midPhrase = words.slice(Math.floor(words.length / 3), Math.floor(words.length / 3) + 5);
+      const searchQuery = [...new Set([...contentWords, ...midPhrase])].join(' ');
       streamLog(requestId, `  [${i + 1}/${keySentences.length}] "${searchQuery.substring(0, 50)}..."`);
 
       // Search all sources in parallel
@@ -133,23 +140,22 @@ app.post('/api/analyze', async (req, res) => {
       for (const result of allResults) {
         let content = result.snippet;
 
-        // Fetch full Wikipedia article content
-        if (result.source_type === 'wikipedia' && !contentCache.has(result.title)) {
-          const full = await sources.getWikipediaContent(result.title);
-          if (full) { contentCache.set(result.title, full); content = full; }
-        } else if (contentCache.has(result.title)) {
-          content = contentCache.get(result.title);
+        // Fetch full Wikipedia article — cache by title, score all returned articles
+        if (result.source_type === 'wikipedia') {
+          if (!contentCache.has(result.title)) {
+            const full = await sources.getWikipediaContent(result.title);
+            if (full) contentCache.set(result.title, full);
+          }
+          if (contentCache.has(result.title)) content = contentCache.get(result.title);
         }
 
         // Try scraping web pages for deeper content
-        if (result.source_type === 'web' && result.url && !contentCache.has(result.url)) {
-          const scraped = await sources.scrapeWebPage(result.url);
-          if (scraped && scraped.length > 100) {
-            contentCache.set(result.url, scraped);
-            content = scraped;
+        if (result.source_type === 'web' && result.url) {
+          if (!contentCache.has(result.url)) {
+            const scraped = await sources.scrapeWebPage(result.url);
+            if (scraped && scraped.length > 100) contentCache.set(result.url, scraped);
           }
-        } else if (contentCache.has(result.url)) {
-          content = contentCache.get(result.url);
+          if (contentCache.has(result.url)) content = contentCache.get(result.url);
         }
 
         if (!content || content.length < 20) continue;
@@ -199,18 +205,40 @@ app.post('/api/analyze', async (req, res) => {
         streamLog(requestId, `    ○ No significant match`, 'dim');
       }
 
-      if (i < keySentences.length - 1) await sources.delay(400);
+      if (i < keySentences.length - 1) await sources.delay(1300);
     }
 
     // ── Phase 2: Keyword deep scan ──
+    // Search Wikipedia by keyword to get the canonical article title, then use
+    // already-cached content where possible to avoid redundant fetches.
     streamLog(requestId, `\n📖 Phase 2: Deep keyword scan (${keywords.length} keywords)...`);
+    const phase2Checked = new Set(); // track article titles already scanned in Phase 2
     for (const keyword of keywords.slice(0, 4)) {
-      if (contentCache.has(keyword)) continue;
-      const content = await sources.getWikipediaContent(keyword);
+      // Full-text search finds articles where the keyword appears in the body,
+      // not just the title — better coverage for Phase 2's deep scan
+      const wikiHits = await sources.searchWikipediaFullText(keyword);
+      const articleTitle = wikiHits.length > 0 ? wikiHits[0].title : keyword;
+
+      if (phase2Checked.has(articleTitle)) { streamLog(requestId, `  [skip] "${articleTitle}" already scanned`, 'dim'); continue; }
+      phase2Checked.add(articleTitle);
+      streamLog(requestId, `  [scan] "${articleTitle}" (keyword: ${keyword})`, 'dim');
+
+      // Reuse Phase 1 cache if already fetched, otherwise fetch now
+      let content = contentCache.get(articleTitle) || '';
+      if (!content) {
+        const full = await sources.getWikipediaContent(articleTitle);
+        content = full ? full.substring(0, 5000) : '';
+        if (content) contentCache.set(articleTitle, content);
+      } else {
+        // Use first 5k chars for Phase 2 scan to keep loop fast
+        content = content.substring(0, 5000);
+      }
+
       if (content && content.length > 100) {
-        contentCache.set(keyword, content);
         for (const sentence of allSentences) {
-          const alreadyFlagged = segments.some(s => s.text.includes(sentence.substring(0, 30)));
+          // Use TF-IDF cosine overlap instead of substring prefix — catches semantic
+          // duplicates regardless of word order or sentence start differences
+          const alreadyFlagged = segments.some(s => algo.tfidfCosineSimilarity(s.text, sentence) > 0.75);
           if (alreadyFlagged) continue;
 
           const score = computeSimilarity(sentence, content);
@@ -221,18 +249,18 @@ app.post('/api/analyze', async (req, res) => {
             const type = score >= 0.35 ? 'high' : score >= 0.20 ? 'medium' : 'paraphrase';
             totalFlaggedWords += type === 'high' ? sentenceWords : type === 'medium' ? Math.round(sentenceWords * 0.7) : Math.round(sentenceWords * 0.4);
             const displayText = sentence.length > 150 ? sentence.substring(0, 147) + '...' : sentence;
-            const wikiUrl = `https://en.wikipedia.org/wiki/${encodeURIComponent(keyword.replace(/ /g, '_'))}`;
-            streamLog(requestId, `    ✓ Deep [${type}] ${(score * 100).toFixed(0)}% in "${keyword}"`);
+            const wikiUrl = `https://en.wikipedia.org/wiki/${encodeURIComponent(articleTitle.replace(/ /g, '_'))}`;
+            streamLog(requestId, `    ✓ Deep [${type}] ${(score * 100).toFixed(0)}% → "${articleTitle}"`);
             segments.push({
               text: displayText, type,
-              reason: `${type === 'high' ? 'High' : type === 'medium' ? 'Moderate' : 'Possible'} similarity (${(score * 100).toFixed(0)}%) with Wikipedia: ${keyword}`,
-              source: `Wikipedia: ${keyword.charAt(0).toUpperCase() + keyword.slice(1)}`,
+              reason: `${type === 'high' ? 'High' : type === 'medium' ? 'Moderate' : 'Possible'} similarity (${(score * 100).toFixed(0)}%) with Wikipedia: ${articleTitle}`,
+              source: `Wikipedia: ${articleTitle}`,
               source_url: wikiUrl, similarity: score,
             });
-            if (!sourceMap[keyword]) sourceMap[keyword] = { title: `Wikipedia: ${keyword}`, url: wikiUrl, matchedWords: 0, matchCount: 0, bestScore: 0 };
-            sourceMap[keyword].matchedWords += sentenceWords;
-            sourceMap[keyword].matchCount++;
-            if (score > sourceMap[keyword].bestScore) sourceMap[keyword].bestScore = score;
+            if (!sourceMap[articleTitle]) sourceMap[articleTitle] = { title: `Wikipedia: ${articleTitle}`, url: wikiUrl, matchedWords: 0, matchCount: 0, bestScore: 0 };
+            sourceMap[articleTitle].matchedWords += sentenceWords;
+            sourceMap[articleTitle].matchCount++;
+            if (score > sourceMap[articleTitle].bestScore) sourceMap[articleTitle].bestScore = score;
           }
         }
       }
@@ -340,7 +368,7 @@ Sources checked: ${contentCache.size} | Sensitivity: ${sensitivity}`;
       sentence_count: allSentences.length,
       flagged_phrases: segments.length,
       sources_found: srcList.length,
-      ai_detection: { score: aiDetection.score, verdict: aiDetection.verdict, level: aiDetection.level, metrics: aiDetection.metrics },
+      ai_detection: { score: aiDetection.score, verdict: aiDetection.verdict, level: aiDetection.level, confidence: aiDetection.confidence, metrics: aiDetection.metrics },
       segments: segments.map(s => ({ text: s.text, type: s.type, reason: s.reason, source: s.source, source_url: s.source_url })),
       sources: srcList, suggestions, full_report: fullReport,
     });
